@@ -1,0 +1,5 @@
+# Optional - only needed for the bonus/advanced components.
+# Install with: pip install -r requirements-optional.txt
+
+torch>=2.2          # needed for ml/train_lstm.py (sequence model)
+shap>=0.45           # needed for ml/evaluate.py's SHAP explainability plot

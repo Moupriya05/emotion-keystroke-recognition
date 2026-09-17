@@ -1,0 +1,23 @@
+Best model: xgboost
+
+CV results (train set, group-aware 5-fold, f1_macro):
+  logistic_regression: 0.226 +/- 0.053
+  random_forest: 0.373 +/- 0.109
+  svm_rbf: 0.245 +/- 0.049
+  gradient_boosting: 0.378 +/- 0.084
+  xgboost: 0.396 +/- 0.088
+
+Held-out test accuracy: 0.573
+Held-out test f1_macro: 0.390
+
+              precision    recall  f1-score   support
+
+       Angry       0.36      0.42      0.38        12
+        Calm       0.25      0.06      0.09        18
+       Happy       0.50      0.19      0.27        16
+     Neutral       0.65      0.91      0.76        57
+         Sad       0.46      0.43      0.44        14
+
+    accuracy                           0.57       117
+   macro avg       0.44      0.40      0.39       117
+weighted avg       0.52      0.57      0.51       117

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Keystroke Emotion Data Collector</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --accent:#6c8cff; --text:#e8e9ee; --muted:#8a8f9c; --good:#3ecf8e; --warn:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif; max-width:720px; margin:40px auto; padding:0 20px; }
+  h1 { font-size:22px; margin-bottom:4px; }
+  p.sub { color:var(--muted); margin-top:0; }
+  .panel { background:var(--panel); border-radius:12px; padding:24px; margin-bottom:20px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input[type=text], select { width:100%; padding:10px 12px; border-radius:8px; border:1px solid #2a2e38; background:#0f1115; color:var(--text); font-size:14px; margin-bottom:16px; }
+  .prompt { background:#0f1115; border:1px solid #2a2e38; border-radius:8px; padding:14px; font-size:16px; line-height:1.6; margin-bottom:14px; color:#d7d9e0; }
+  textarea { width:100%; min-height:110px; padding:14px; border-radius:8px; border:1px solid #2a2e38; background:#0f1115; color:var(--text); font-size:16px; font-family:inherit; resize:vertical; }
+  button { background:var(--accent); color:white; border:none; padding:12px 20px; border-radius:8px; font-size:14px; cursor:pointer; font-weight:600; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  button.secondary { background:transparent; border:1px solid #2a2e38; color:var(--text); }
+  .row { display:flex; gap:10px; margin-top:14px; }
+  .stats { display:flex; gap:20px; margin-top:14px; font-size:13px; color:var(--muted); }
+  .stats b { color:var(--text); }
+  .status { margin-top:14px; font-size:13px; }
+  .status.ok { color:var(--good); }
+  .status.err { color:var(--warn); }
+  .emotion-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:16px;}
+  .emotion-grid button { padding:14px 8px; background:#1d212b; border:1px solid #2a2e38; }
+  .emotion-grid button.selected { background:var(--accent); border-color:var(--accent); }
+  footer { color:var(--muted); font-size:12px; text-align:center; margin-top:30px; }
+</style>
+</head>
+<body>
+
+<h1>⌨️ Keystroke Emotion Data Collector</h1>
+<p class="sub">Records timing between key presses (not what you type) and stores it as a labeled session for training the classifier.</p>
+
+<div class="panel">
+  <label>Participant / User ID</label>
+  <input type="text" id="userId" placeholder="e.g. p001" value="p001" />
+
+  <label>Text type</label>
+  <select id="textType">
+    <option value="fixed">Fixed text (copy the sentence below - recommended, controls for content)</option>
+    <option value="free">Free text (type anything you want)</option>
+  </select>
+
+  <div id="promptBox" class="prompt">the quick brown fox jumps over the lazy dog</div>
+  <button class="secondary" type="button" onclick="newPrompt()">🔀 New sentence</button>
+</div>
+
+<div class="panel">
+  <label>How are you feeling RIGHT NOW, before you start typing? (self-report - be honest, this is your label)</label>
+  <div class="emotion-grid" id="emotionGrid"></div>
+
+  <label>Type here:</label>
+  <textarea id="typingArea" placeholder="Click here and start typing the sentence above..." autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+
+  <div class="stats">
+    <div>Keystrokes: <b id="statCount">0</b></div>
+    <div>Elapsed: <b id="statTime">0.0s</b></div>
+    <div>Speed: <b id="statSpeed">0</b> WPM</div>
+  </div>
+
+  <div class="row">
+    <button type="button" onclick="submitSession()" id="submitBtn">💾 Save session</button>
+    <button type="button" class="secondary" onclick="resetSession()">↺ Reset</button>
+    <button type="button" class="secondary" onclick="downloadJson()">⬇ Download JSON backup</button>
+  </div>
+  <div class="status" id="statusMsg"></div>
+</div>
+
+<footer>Posts to <code id="apiUrlShown"></code>. No backend running? Use "Download JSON backup" instead and load it manually.</footer>
+
+<script>
+const API_URL = "http://127.0.0.1:8000/api/sessions";
+document.getElementById("apiUrlShown").textContent = API_URL;
+
+const PROMPTS = [
+  "the quick brown fox jumps over the lazy dog",
+  "pack my box with five dozen liquor jugs",
+  "how vexingly quick daft zebras jump",
+  "sphinx of black quartz judge my vow",
+];
+const EMOTIONS = ["Happy", "Sad", "Angry", "Calm", "Neutral"];
+
+let events = [];       // raw keydown/keyup log for the current session
+let startTime = null;
+let selectedEmotion = null;
+let timerHandle = null;
+
+function newPrompt() {
+  const p = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+  document.getElementById("promptBox").textContent = p;
+}
+
+function buildEmotionGrid() {
+  const grid = document.getElementById("emotionGrid");
+  grid.innerHTML = "";
+  EMOTIONS.forEach(e => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = e;
+    btn.onclick = () => {
+      selectedEmotion = e;
+      [...grid.children].forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+    };
+    grid.appendChild(btn);
+  });
+}
+buildEmotionGrid();
+newPrompt();
+
+const textarea = document.getElementById("typingArea");
+
+function nowMs() { return performance.now(); }
+
+textarea.addEventListener("keydown", (e) => {
+  if (startTime === null) {
+    startTime = nowMs();
+    timerHandle = setInterval(updateStats, 200);
+  }
+  events.push({ key: e.key, code: e.code, type: "down", t: nowMs() });
+});
+
+textarea.addEventListener("keyup", (e) => {
+  events.push({ key: e.key, code: e.code, type: "up", t: nowMs() });
+  updateStats();
+});
+
+function updateStats() {
+  document.getElementById("statCount").textContent = events.length;
+  if (startTime !== null) {
+    const elapsedS = (nowMs() - startTime) / 1000;
+    document.getElementById("statTime").textContent = elapsedS.toFixed(1) + "s";
+    const words = textarea.value.trim().split(/\s+/).filter(Boolean).length;
+    const wpm = elapsedS > 0 ? Math.round((words / elapsedS) * 60) : 0;
+    document.getElementById("statSpeed").textContent = wpm;
+  }
+}
+
+function resetSession() {
+  events = [];
+  startTime = null;
+  clearInterval(timerHandle);
+  textarea.value = "";
+  document.getElementById("statCount").textContent = "0";
+  document.getElementById("statTime").textContent = "0.0s";
+  document.getElementById("statSpeed").textContent = "0";
+  document.getElementById("statusMsg").textContent = "";
+  document.getElementById("statusMsg").className = "status";
+}
+
+function buildPayload() {
+  return {
+    user_id: document.getElementById("userId").value || "anonymous",
+    events: events,
+    emotion_label: selectedEmotion,
+    text_type: document.getElementById("textType").value,
+    prompt_text: document.getElementById("promptBox").textContent,
+    typed_text: textarea.value,
+  };
+}
+
+function downloadJson() {
+  const payload = buildPayload();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `session_${payload.user_id}_${Date.now()}.json`;
+  a.click();
+}
+
+async function submitSession() {
+  const statusEl = document.getElementById("statusMsg");
+  if (!selectedEmotion) {
+    statusEl.textContent = "⚠ Please select how you're feeling before saving.";
+    statusEl.className = "status err";
+    return;
+  }
+  if (events.length < 8) {
+    statusEl.textContent = "⚠ Type a bit more first (need at least a few keystrokes).";
+    statusEl.className = "status err";
+    return;
+  }
+  const payload = buildPayload();
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    statusEl.textContent = `✔ Saved as session #${data.session_id} (${payload.emotion_label}, ${events.length} events).`;
+    statusEl.className = "status ok";
+    resetSession();
+    selectedEmotion = null;
+    [...document.getElementById("emotionGrid").children].forEach(b => b.classList.remove("selected"));
+    newPrompt();
+  } catch (err) {
+    statusEl.textContent = "✖ Couldn't reach the backend (" + err.message + "). Use 'Download JSON backup' instead.";
+    statusEl.className = "status err";
+  }
+}
+</script>
+</body>
+</html>

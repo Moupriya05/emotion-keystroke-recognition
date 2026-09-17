@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Live Emotion-from-Typing Demo</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --accent:#6c8cff; --text:#e8e9ee; --muted:#8a8f9c; }
+  * { box-sizing: border-box; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif; max-width:680px; margin:40px auto; padding:0 20px; }
+  h1 { font-size:22px; margin-bottom:4px; }
+  p.sub { color:var(--muted); margin-top:0; }
+  .panel { background:var(--panel); border-radius:12px; padding:24px; margin-bottom:20px; }
+  textarea { width:100%; min-height:130px; padding:14px; border-radius:8px; border:1px solid #2a2e38; background:#0f1115; color:var(--text); font-size:16px; font-family:inherit; resize:vertical; }
+  button { background:var(--accent); color:white; border:none; padding:12px 20px; border-radius:8px; font-size:14px; cursor:pointer; font-weight:600; margin-top:14px; }
+  button.secondary { background:transparent; border:1px solid #2a2e38; color:var(--text); margin-left:10px; }
+  .result { margin-top:20px; }
+  .bar-row { display:flex; align-items:center; margin:8px 0; gap:10px; }
+  .bar-label { width:70px; font-size:13px; color:var(--muted); }
+  .bar-track { flex:1; background:#0f1115; border-radius:6px; height:18px; overflow:hidden; }
+  .bar-fill { height:100%; background:var(--accent); width:0%; transition:width .3s ease; }
+  .bar-pct { width:50px; text-align:right; font-size:13px; color:var(--muted); }
+  .headline { font-size:28px; font-weight:700; margin-bottom:4px; }
+  .meta { color:var(--muted); font-size:13px; }
+  .status { margin-top:10px; font-size:13px; color:#ff6b6b; }
+</style>
+</head>
+<body>
+
+<h1>🧠 Live Emotion-from-Typing Demo</h1>
+<p class="sub">Type a sentence or two below (content doesn't matter), then click "Detect my emotion". This calls the FastAPI backend, which runs your trained model.</p>
+
+<div class="panel">
+  <textarea id="typingArea" placeholder="Start typing anything here..." autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+  <button onclick="detectEmotion()">🔍 Detect my emotion</button>
+  <button class="secondary" onclick="reset()">↺ Clear</button>
+  <div class="status" id="statusMsg"></div>
+
+  <div class="result" id="resultBox" style="display:none;">
+    <div class="headline" id="headline"></div>
+    <div class="meta" id="meta"></div>
+    <div id="bars" style="margin-top:16px;"></div>
+  </div>
+</div>
+
+<script>
+const API_URL = "http://127.0.0.1:8000/api/predict";
+let events = [];
+
+const textarea = document.getElementById("typingArea");
+function nowMs() { return performance.now(); }
+
+textarea.addEventListener("keydown", (e) => events.push({ key: e.key, code: e.code, type: "down", t: nowMs() }));
+textarea.addEventListener("keyup",   (e) => events.push({ key: e.key, code: e.code, type: "up",   t: nowMs() }));
+
+function reset() {
+  events = [];
+  textarea.value = "";
+  document.getElementById("resultBox").style.display = "none";
+  document.getElementById("statusMsg").textContent = "";
+}
+
+const EMOJI = { Happy: "😄", Sad: "😢", Angry: "😠", Calm: "😌", Neutral: "😐" };
+
+async function detectEmotion() {
+  const statusEl = document.getElementById("statusMsg");
+  statusEl.textContent = "";
+  if (events.length < 8) {
+    statusEl.textContent = "Type a bit more first - need at least a few keystrokes.";
+    return;
+  }
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events, prompt_text: "", typed_text: textarea.value }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const data = await res.json();
+    renderResult(data);
+    events = [];
+    textarea.value = "";
+    textarea.focus();
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message + " (is `uvicorn backend.app:app` running, and have you run ml/train.py?)";
+  }
+}
+
+function renderResult(data) {
+  document.getElementById("resultBox").style.display = "block";
+  const emoji = EMOJI[data.predicted_emotion] || "🤔";
+  document.getElementById("headline").textContent = `${emoji} ${data.predicted_emotion}`;
+  document.getElementById("meta").textContent =
+    `${data.num_keystrokes} keystrokes analysed · ${data.typing_speed_wpm} WPM`;
+
+  const barsEl = document.getElementById("bars");
+  barsEl.innerHTML = "";
+  const sorted = Object.entries(data.probabilities).sort((a, b) => b[1] - a[1]);
+  for (const [label, p] of sorted) {
+    const pct = (p * 100).toFixed(1);
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label">${label}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div class="bar-pct">${pct}%</div>`;
+    barsEl.appendChild(row);
+  }
+}
+</script>
+</body>
+</html>
